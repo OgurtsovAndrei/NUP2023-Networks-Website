@@ -103,7 +103,7 @@ fun Application.module() {
                 """.trimIndent()
                     )
                     var userIp = call.request.origin.remoteHost
-                    val userData = allUsers.getOrPut(userIp) { UserData(windowsTemplate.toMutableMap(), 8e9.toLong(), true) }
+                    val userData = allUsers.getOrPut(userIp) { UserData(windowsTemplate.toMutableMap(), 8e4.toLong(), true) }
                     val windows = userData.userWindows
 
                     for (window in windows.values) {

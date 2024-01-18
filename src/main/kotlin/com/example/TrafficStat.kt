@@ -31,6 +31,7 @@ class TrafficStat {
                 }
             }
         }
+
         process = ProcessBuilder("bash", "-c", script).start()
         val stdInput = BufferedReader(InputStreamReader(process.inputStream))
         val stdError = BufferedReader(InputStreamReader(process.errorStream))
@@ -103,6 +104,7 @@ object Commands {
         "echo $password | sudo -S $TC filter add dev $IF protocol ip parent 1:0 prio 1 u32 match ip dst $ip flowid 1:30"
 
     fun executeCmd(cmd: String) {
-        val process = ProcessBuilder("bash", "-c", cmd).start()
+//        val process = ProcessBuilder("bash", "-c", cmd).start()
+        println("-".repeat(50) + "\n$cmd\n" + "-".repeat(50))
     }
 }
