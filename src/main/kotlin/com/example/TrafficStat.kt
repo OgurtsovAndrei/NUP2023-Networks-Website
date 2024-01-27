@@ -1,11 +1,19 @@
 import com.example.UserData
 import com.example.allUsers
+import com.example.defaultTrafficLimit
+import com.example.stat
 import com.example.windowsTemplate
-import kotlinx.coroutines.*
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.trySendBlocking
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import java.io.BufferedReader
 import java.io.InputStreamReader
+
+fun getDefaultUserData(): UserData = UserData(windowsTemplate.toMutableMap(), defaultTrafficLimit, true)
 
 class TrafficStat {
     private val process: Process
@@ -14,7 +22,13 @@ class TrafficStat {
     val data: MutableMap<String, Long> = mutableMapOf()
 
     init {
-        repeat(3) {
+        defaultScope.launch {
+            while (true) {
+                delay(1000)
+                println(stat.data.map { Pair(it.value, it.key) }.sortedBy { it.first }.reversed())
+            }
+        }
+        repeat(1) {
             defaultScope.launch {
                 while (true) {
                     val line = eventChannel.receive()
@@ -22,8 +36,8 @@ class TrafficStat {
                     if (headerData != null) {
                         val sourceIP = headerData.sourceIp
                         val destIP = headerData.destIp
-                        data[sourceIP] = data.getOrDefault(sourceIP, 0) + headerData.length
-                        data[destIP] = data.getOrDefault(destIP, 0) + headerData.length
+                        data[sourceIP] = data.getOrPut(sourceIP) { 0 } + headerData.length
+                        data[destIP] = data.getOrPut(destIP) { 0 } + headerData.length
 
                         checkIp(sourceIP)
                         checkIp(destIP)
@@ -41,10 +55,12 @@ class TrafficStat {
     }
 
     fun checkIp(userIP: String) {
-        if (!userIP.startsWith("10.202.20") or !userIP.startsWith("10.202.10")) return
-        val userData = allUsers.getOrPut(userIP) { UserData(windowsTemplate.toMutableMap(), 8e9.toLong(), true) }
-        if (data.getOrDefault(userIP, 0) > userData.trafficLimit) {
-            Commands.executeCmd(Commands.getStopTrafficCmd(userIP))
+        if (!userIP.startsWith("10.202.30") and !userIP.startsWith("10.202.10") and !userIP.startsWith("10.202.20")) return
+        val userData = allUsers.getOrPut(userIP) { getDefaultUserData() }
+        if (data.getOrPut(userIP) { 0 } > userData.trafficLimit) {
+            if (userData.isBockedTraffic.compareAndSet(false, true)) Commands.executeCmd(
+                Commands.getStopTrafficCmd(userIP), userIP
+            )
         }
     }
 
@@ -57,7 +73,7 @@ class TrafficStat {
     }
 
     companion object {
-        const val script = "echo ${Commands.password} | sudo -S tcpdump -nn -i ${Commands.wifiInterface} -l -s 0"
+        const val script = "${Commands.sudoHost} tcpdump -nn -i ${Commands.wifiInterface} -l -s 0"
         const val ipReg = "([0-9]{1,3}.){3}[0-9]{1,3}"
         const val portReg = "([:.][0-9]{1,5})?"
         const val timeReg = "[0-9]{2}.[0-9]{2}:[0-9]{2}.[0-9]{6}"
@@ -90,21 +106,40 @@ object Main {
 }
 
 object Commands {
-    const val IF = "enp0s8" // TODO ??
+    const val IF = "wlp0s20f3" // TODO ??
     const val TC = "/sbin/tc" // TODO ??
-    const val password: String = "TODO" // TODO
+    const val passwordSsh: String = "1" // TODO
+    const val passwordHost: String = "TODO" // TODO
+    const val sudoSsh = "echo $passwordSsh | sudo -S"
+    const val sudoHost = "echo $passwordHost | sudo -S"
     const val wifiInterface = "any"
+    fun getSshCmd(ip: String): String = "ssh student@${getRouterIP(ip)}"
+    fun getRouterIP(ip: String): String = if (ip.startsWith("10.202.30")) "10.202.30.2"
+    else if (ip.startsWith("10.202.10")) "10.202.10.1" else throw RuntimeException("")
 
-    fun getStopTrafficCmd(ip: String): String = "echo $password | sudo -S iptables -A FORWARD -d $ip -j DROP\n"
-    fun getStartTrafficCmd(ip: String): String = "echo $password | sudo -S iptables -A FORWARD -d $ip -j DROP\n"
+    fun getBlockingIP(ip: String): String = if (ip.startsWith("10.202.30")) "10.202.20.0/24"
+    else if (ip.startsWith("10.202.10")) ip else throw RuntimeException("")
+
+    fun getStopTrafficCmd(ip: String): String =
+        "$sudoSsh iptables -A FORWARD -s ${getBlockingIP(ip)} ! -d 10.202.30.100 -j DROP\n"
+
+    fun getStartTrafficCmd(ip: String): String =
+        "$sudoSsh iptables -D FORWARD -s ${getBlockingIP(ip)} ! -d 10.202.30.100 -j DROP\n"
+
     fun getUpgradeSpeedCmd(ip: String): String =
-        "echo $password | sudo -S $TC filter add dev $IF protocol ip parent 1:0 prio 1 u32 match ip dst $ip flowid 1:10"
+        "$stat ssh -tt student@ sudo -S $TC filter add dev $IF protocol ip parent 1:0 prio 1 u32 match ip dst $ip flowid 1:10"
 
     fun getDowngradeSpeedCmd(ip: String): String =
-        "echo $password | sudo -S $TC filter add dev $IF protocol ip parent 1:0 prio 1 u32 match ip dst $ip flowid 1:30"
+        "$sudoSsh $TC filter add dev $IF protocol ip parent 1:0 prio 1 u32 match ip dst $ip flowid 1:30"
 
-    fun executeCmd(cmd: String) {
-//        val process = ProcessBuilder("bash", "-c", cmd).start()
-        println("-".repeat(50) + "\n$cmd\n" + "-".repeat(50))
+    fun executeCmd(cmd: String, ip: String) {
+
+        val process = ProcessBuilder("bash", "-c", getSshCmd(ip) + " '$cmd'").start()
+        val stdInput = BufferedReader(InputStreamReader(process.inputStream))
+        val stdError = BufferedReader(InputStreamReader(process.errorStream))
+        stdInput.lines().forEach { println(it) }
+        stdError.lines().forEach { System.err.println(it) }
+
+        println("-".repeat(50) + "\n" + getSshCmd(ip) + " '$cmd'\n" + "-".repeat(50))
     }
 }

@@ -35,13 +35,6 @@ dependencies {
 
     implementation("org.pcap4j:pcap4j-core:1.8.2")
     implementation("org.pcap4j:pcap4j-packetfactory-static:1.8.2")
-//    implementation("org.pcap4j:pcap4j-core:2.0.0-alpha")
-//    implementation("org.pcap4j:pcap4j-packetfactory-static:2.0.0-alpha")
-//    implementation("com.ardikars.pcap:pcap-spi:1.5.1")
-//    implementation("io.ktor:ktor-jackson:$ktor_version")
-//    implementation("ch.qos.logback:logback-classic:$logback_version")
-//    implementation("org.pcap4j:pcap4j-core:$pcap_version")
-//    implementation("org.pcap4j:pcap4j-packetfactory-static:$pcap_version")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core")
 }
 

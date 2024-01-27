@@ -2,38 +2,54 @@ package com.example
 
 import Commands
 import TrafficStat
+import getDefaultUserData
 import io.ktor.http.*
 import io.ktor.server.application.*
 import io.ktor.server.http.content.*
 import io.ktor.server.plugins.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
+import java.util.concurrent.atomic.AtomicBoolean
 
-data class Window(var id: Int, var selected: Boolean, val title: String, val text: String, val buttonId: String) {
+const val defaultTrafficLimit = 8e9.toLong()
+
+
+data class Window(
+    var id: Int,
+    var selected: Boolean,
+    val title: String,
+    val text: String,
+    val buttonId: String,
+    val trafficLimit: Long,
+    val speedLimit: Boolean
+) {
     fun onTap(userIp: String, windows: MutableMap<String, Window>) {
         println("---> $buttonId button clicked by user with IP: $userIp <---")
         windows.values.forEach { it.selected = it.buttonId == this.buttonId }
         val userData = allUsers.get(userIp) ?: return
+        userData.trafficLimit = this.trafficLimit
+        userData.speedLimit = this.speedLimit
         reloadIpStatus(userIp, userData)
     }
 }
 
 fun reloadIpStatus(ip: String, userData: UserData) {
-    if (!ip.startsWith("10.202.20") or !ip.startsWith("10.202.10")) return
-    if (stat.data.getOrDefault(ip, 0) < userData.trafficLimit) { Commands.executeCmd(Commands.getStartTrafficCmd(ip)) }
-    else { Commands.executeCmd(Commands.getStopTrafficCmd(ip)) }
-    if (userData.speedLimit) { Commands.executeCmd(Commands.getDowngradeSpeedCmd(ip)) }
-    else { Commands.executeCmd(Commands.getUpgradeSpeedCmd(ip)) }
+    if (!ip.startsWith("10.202.30") and !ip.startsWith("10.202.10") and !ip.startsWith("10.202.20")) return
+    if (stat.data.getOrPut(ip) { 0 } < userData.trafficLimit) {
+        if (userData.isBockedTraffic.compareAndSet(true, false)) Commands.executeCmd(Commands.getStartTrafficCmd(ip), ip) }
+    else {if (userData.isBockedTraffic.compareAndSet(false, true)) Commands.executeCmd(Commands.getStopTrafficCmd(ip), ip) }
+    if (userData.speedLimit) { Commands.executeCmd(Commands.getDowngradeSpeedCmd(ip), ip) }
+    else { Commands.executeCmd(Commands.getUpgradeSpeedCmd(ip), ip) }
 }
 
 typealias Windows = MutableMap<String, Window>
 
-data class UserData(val userWindows: Windows, var trafficLimit: Long, var speedLimit: Boolean)
+data class UserData(val userWindows: Windows, var trafficLimit: Long, var speedLimit: Boolean, val isBockedTraffic: AtomicBoolean = AtomicBoolean(false))
 
 val windowsTemplate = mutableMapOf<String, Window>(
-    "A" to Window(1, false, "Title A", "Text description of window A", "A"),
-    "B" to Window(2, false, "Title B", "Text description of window B", "B"),
-    "C" to Window(3, false, "Title C", "Text description of window C", "C"),
+    "A" to Window(1, false, "Title A", "Text description of window A", "A", trafficLimit = defaultTrafficLimit, speedLimit = false),
+    "B" to Window(2, false, "Title B", "Text description of window B", "B", trafficLimit = Long.MAX_VALUE, speedLimit = true),
+    "C" to Window(3, false, "Title C", "Text description of window C", "C", trafficLimit = Long.MAX_VALUE, speedLimit = false),
 )
 var allUsers: MutableMap<String, UserData> = mutableMapOf("localhost" to UserData(windowsTemplate.toMutableMap(), Long.MAX_VALUE, false))
 
@@ -103,7 +119,7 @@ fun Application.module() {
                 """.trimIndent()
                     )
                     var userIp = call.request.origin.remoteHost
-                    val userData = allUsers.getOrPut(userIp) { UserData(windowsTemplate.toMutableMap(), 8e4.toLong(), true) }
+                    val userData = allUsers.getOrPut(userIp) { getDefaultUserData() }
                     val windows = userData.userWindows
 
                     for (window in windows.values) {
@@ -151,7 +167,7 @@ fun Application.module() {
         for (windowTemp in windowsTemplate.values) {
             get("/${windowTemp.buttonId}") {
                 val userIp = call.request.origin.remoteHost
-                val userData = allUsers.getOrPut(userIp) { UserData(windowsTemplate.toMutableMap(), 8e9.toLong(), true) }
+                val userData = allUsers.getOrPut(userIp) { getDefaultUserData() }
                 val windows = userData.userWindows
                 val window = windows[windowTemp.buttonId]
                 window!!.onTap(userIp, windows)
@@ -163,7 +179,7 @@ fun Application.module() {
 
 fun getTraffic(userIp: String): String {
     var userIp = userIp
-    if (userIp == "localhost") { userIp = "172.29.66.172" }
+    if (userIp == "localhost") { userIp = "192.168.10.8" }
 
     val traffic = stat.data[userIp] ?: 0L
     val amount: String = when {
